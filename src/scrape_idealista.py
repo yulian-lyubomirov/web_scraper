@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 
 
 SRC_DIR = Path(__file__).resolve().parent
-DATA_FILE = SRC_DIR / "scraped_listings_madrid.json"
+DEFAULT_DATA_FILE = SRC_DIR / "scraped_listings_madrid.json"
 EXTRACTOR_FILE = SRC_DIR / "extractor.js"
 
 
@@ -35,6 +35,11 @@ def parse_args():
         default=100_000,
         help="Maximum listings to process in this run (default: 100000).",
     )
+    parser.add_argument(
+        "--output",
+        default=str(DEFAULT_DATA_FILE),
+        help=f"JSON output file (default: {DEFAULT_DATA_FILE}). Relative paths use the current directory.",
+    )
     return parser.parse_args()
 
 
@@ -47,18 +52,21 @@ def validate_initial_url(url):
         raise ValueError("initial_url must be a property listing or a /venta-viviendas/ results page")
 
 
-async def scrape(initial_url, max_listings):
+async def scrape(initial_url, max_listings, output_file):
     validate_initial_url(initial_url)
     if max_listings < 1:
         raise ValueError("--max-listings must be at least 1")
     if not EXTRACTOR_FILE.is_file():
         raise FileNotFoundError(f"JavaScript extractor not found: {EXTRACTOR_FILE}")
 
+    data_file = Path(output_file).expanduser().resolve()
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+
     js_extractor_code = EXTRACTOR_FILE.read_text(encoding="utf-8")
-    if DATA_FILE.exists():
-        scraped_listings = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    if data_file.exists():
+        scraped_listings = json.loads(data_file.read_text(encoding="utf-8"))
         if not isinstance(scraped_listings, list):
-            raise ValueError(f"Expected a JSON array in {DATA_FILE}")
+            raise ValueError(f"Expected a JSON array in {data_file}")
     else:
         scraped_listings = []
 
@@ -67,7 +75,7 @@ async def scrape(initial_url, max_listings):
         for index, item in enumerate(scraped_listings)
         if isinstance(item, dict) and item.get("id") is not None
     }
-    print(f"Loaded {len(scraped_listings)} existing listings from {DATA_FILE}")
+    print(f"Loaded {len(scraped_listings)} existing listings from {data_file}")
 
     visited_listing_ids = set()
     waited_milestones = set()
@@ -163,7 +171,7 @@ async def scrape(initial_url, max_listings):
                         scraped_listings.append(property_data)
                         action = "Saved"
 
-                    DATA_FILE.write_text(
+                    data_file.write_text(
                         json.dumps(scraped_listings, ensure_ascii=False, indent=2),
                         encoding="utf-8",
                     )
@@ -249,7 +257,7 @@ async def scrape(initial_url, max_listings):
                 except Exception:
                     pass
 
-            print(f"Finished. {len(scraped_listings)} property objects are in {DATA_FILE}")
+            print(f"Finished. {len(scraped_listings)} property objects are in {data_file}")
         finally:
             await browser.close()
 
@@ -257,7 +265,7 @@ async def scrape(initial_url, max_listings):
 def main():
     args = parse_args()
     try:
-        asyncio.run(scrape(args.initial_url, args.max_listings))
+        asyncio.run(scrape(args.initial_url, args.max_listings, args.output))
     except KeyboardInterrupt:
         print("Interrupted by user; data saved so far remains in the output JSON.")
 
