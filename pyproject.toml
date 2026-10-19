@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "web-scraper"
+version = "0.1.0"
+description = "Core web scraping library"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.12,<5",
+    "curl-cffi>=0.16.3",
+    "selenium>=4.51.0",
+    "chromedriver-autoinstaller>=0.6.4",
+    "pandas>=3.0.6",
+    "playwright>=1.63.0",
+    "chromium>=0.0.0",
+    "pydantic>=2.14.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/web_scraper"]
