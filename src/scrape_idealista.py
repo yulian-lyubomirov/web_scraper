@@ -17,7 +17,9 @@ from playwright.async_api import async_playwright
 
 
 SRC_DIR = Path(__file__).resolve().parent
-DEFAULT_DATA_FILE = SRC_DIR / "scraped_listings_madrid.json"
+ROOT_DIR = SRC_DIR.parent
+
+DEFAULT_DATA_FILE = ROOT_DIR / "data" / "scraped_listings_madrid.json"
 EXTRACTOR_FILE = SRC_DIR / "extractor.js"
 
 
