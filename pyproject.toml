@@ -19,6 +19,8 @@ dependencies = [
     "playwright>=1.63.0",
     "chromium>=0.0.0",
     "pydantic>=2.14.1",
+    "python-dotenv>=1.0,<2",
+    "dotenv>=0.9.9",
 ]
 
 [tool.hatch.build.targets.wheel]
