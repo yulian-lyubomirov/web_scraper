@@ -9417,38 +9417,6 @@
       }
     },
     "scrapedAt": "2026-10-19T15:48:28.275Z"
-  },
-  {
-    "id": "110087412",
-    "url": "https://www.idealista.com/inmueble/110087412/",
-    "title": "",
-    "locationText": "",
-    "neighborhood": null,
-    "city": null,
-    "price": "",
-    "features": [],
-    "advertiser": "",
-    "latitude": null,
-    "longitude": null,
-    "coordinateSource": null,
-    "isApproximateLocation": false,
-    "locationNotice": null,
-    "mapDiagnostics": {
-      "mapConfigPresent": false,
-      "mapConfigCoordinateValues": null,
-      "mapGlobalNames": [
-        "createImageBitmap"
-      ],
-      "mapGlobalKeys": {},
-      "mapUrls": [
-        "https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAAAAAMA11jD3vyVwf4AUp9MXg%3D%3D&hash=AC81AADC3279CA4C7B968B717FBB30&cid=roAVfVcxzzPDj7UDgcAa9vIvU8eCu5AFlhOBH6q6o45UNOdE3xxI2ddUSgB1lsy5idRhEoolQzpPdt0BaseJSV~xFKc7vws8TE25q19y3agXDWGKDd8FzEweSHaYTabN&t=fe&referer=https%3A%2F%2Fwww.idealista.com%2Finmueble%2F110087412%2F&s=17156&e=b23381dcfdea0b2ce7083698a50f7e258eb1a6561de889b33b2d67281a332fac8fe6fb16323d07023bac669b8c200c24&dm=cd"
-      ],
-      "mapUrlCoordinateMatches": [],
-      "mapElementFound": false,
-      "mapTriggerFound": false,
-      "mapTriggerText": null,
-      "mapElementAttributes": null
-    },
-    "scrapedAt": "2026-10-19T15:48:33.374Z"
   }
+ 
 ]

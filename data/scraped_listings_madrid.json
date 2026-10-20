@@ -339966,39 +339966,6 @@
     "scrapedAt": "2026-10-19T15:43:16.682Z"
   },
   {
-    "id": "111345606",
-    "url": "https://www.idealista.com/inmueble/111345606/",
-    "title": "",
-    "locationText": "Sanchinarro, Madrid",
-    "neighborhood": "Sanchinarro",
-    "city": "Madrid",
-    "price": "749.000",
-    "features": [],
-    "advertiser": "Profesional\nBrem Global Inmobiliaria",
-    "latitude": 40.487829,
-    "longitude": -3.648447,
-    "coordinateSource": "map-url-pattern",
-    "isApproximateLocation": false,
-    "locationNotice": "Por privacidad, el anunciante no ha indicado la ubicación exacta del inmueble.",
-    "mapDiagnostics": {
-      "mapConfigPresent": false,
-      "mapConfigCoordinateValues": null,
-      "mapGlobalNames": [
-        "createImageBitmap"
-      ],
-      "mapGlobalKeys": {},
-      "mapUrls": [
-        "https://geo.captcha-delivery.com/interstitial/?initialCid=AHrlqAAAAAMAjAxnyB0WjagAUp9MXg%3D%3D&hash=AC81AADC3279CA4C7B968B717FBB30&cid=U_30yNOvFnsBKqAjvG4eLF_ug5JWJcc345HKr0XF0vXFe0CF2c6qgfa9yno0STVd3DIJxMpPcVHd3i9sRAIf2Ym9plhY6jZBeCBqMuBpg60bRh3AE0Hr3D2p96dXUJXN&referer=https%3A%2F%2Fwww.idealista.com%2Finmueble%2F111345606%2F&s=17156&e=5d5e6c048bbbcf1f54ccb7a16bca87d9be6879d1fd08ddb86c393670437346837e1616be97de898ca1b086c69ace611c&b=1450833&dm=cd"
-      ],
-      "mapUrlCoordinateMatches": [],
-      "mapElementFound": false,
-      "mapTriggerFound": false,
-      "mapTriggerText": null,
-      "mapElementAttributes": null
-    },
-    "scrapedAt": "2026-10-19T15:43:21.902Z"
-  },
-  {
     "id": "111589687",
     "url": "https://www.idealista.com/inmueble/111589687/mapa",
     "title": "",
