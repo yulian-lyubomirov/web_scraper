@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import argparse
+from configparser import ConfigParser
 import json
 import logging
-import os
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from dotenv import load_dotenv
+from psycopg.conninfo import make_conninfo
 
 from db import Inserter
 from models import PropertyObject
@@ -33,28 +33,38 @@ ASSET_COLUMNS = [
     "scraped_at",
 ]
 logger = logging.getLogger(__name__)
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 
 def load_json(path: str | Path) -> list[PropertyObject]:
-    """Read a JSON array of scraped listings and validate each as an asset."""
+    """Read a JSON array and skip records that cannot form a listing model."""
     with Path(path).open(encoding="utf-8") as file:
         payload: Any = json.load(file)
 
     if not isinstance(payload, list):
         raise ValueError("Input JSON must contain an array of listings")
-    return [PropertyObject.from_scraped_dict(item) for item in payload]
+    assets = []
+    invalid = 0
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict):
+            invalid += 1
+            logger.warning("Skipping non-object listing at %s[%d]", path, index)
+            continue
+        try:
+            assets.append(PropertyObject.from_scraped_dict(item))
+        except (TypeError, ValueError) as error:
+            invalid += 1
+            logger.warning("Skipping invalid listing at %s[%d]: %s", path, index, error)
+    if invalid:
+        logger.info("Skipped %d invalid listings from %s", invalid, path)
+    return assets
 
 
 def assets_to_dataframe(assets: list[PropertyObject]) -> pd.DataFrame:
-    """Map validated listings to the columns in db/migrations/init.sql."""
+    """Map listings to DB columns and drop rows missing required DB values."""
     scraped_at = datetime.now(timezone.utc)
     rows = []
     for asset in assets:
-        if asset.price is None or asset.size is None:
-            raise ValueError(f"Listing {asset.id} must have both price and size")
-        if not asset.city or not asset.neighborhood:
-            raise ValueError(f"Listing {asset.id} must have city and neighborhood")
-
         rows.append(
             {
                 "city_name": asset.city,
@@ -71,16 +81,31 @@ def assets_to_dataframe(assets: list[PropertyObject]) -> pd.DataFrame:
                 "scraped_at": scraped_at,
             }
         )
-    return pd.DataFrame(rows, columns=ASSET_COLUMNS)
+    dataframe = pd.DataFrame(rows, columns=ASSET_COLUMNS)
+    required = [
+        "city_name",
+        "source_listing_id",
+        "price",
+        "size",
+    ]
+    for column in ("city_name", "neighborhood_name", "source_listing_id"):
+        dataframe[column] = dataframe[column].replace(r"^\s*$", pd.NA, regex=True)
+    incomplete = dataframe[required].isna().any(axis=1)
+    skipped = int(incomplete.sum())
+    if skipped:
+        logger.warning(
+            "Skipping %d listings missing required DB fields: %s",
+            skipped,
+            ", ".join(required),
+        )
+    return dataframe.loc[~incomplete].reset_index(drop=True)
 
 
 async def insert_json(path: str | Path, *, service: str | None = None) -> int:
     """Load listings, add missing locations, then insert assets."""
     assets = await asyncio.to_thread(load_json, path)
     dataframe = assets_to_dataframe(assets)
-    service_file = Path(__file__).resolve().parents[1] / "pgser.conf"
-    os.environ.setdefault("PGSERVICEFILE", str(service_file))
-    db_service = service or _db_service()
+    db_service = service or "local"
     inserted_cities, inserted_neighborhoods = await _insert_missing_locations(
         dataframe, service=db_service
     )
@@ -94,6 +119,25 @@ async def insert_json(path: str | Path, *, service: str | None = None) -> int:
     return inserted_assets
 
 
+async def insert_directory(path: str | Path, *, service: str | None = None) -> int:
+    """Load every JSON listings file in a directory, in filename order."""
+    directory = Path(path)
+    if not directory.is_dir():
+        raise NotADirectoryError(directory)
+
+    files = sorted(directory.glob("*.json"))
+    if not files:
+        logger.warning("No JSON files found in %s", directory)
+        return 0
+
+    total = 0
+    for json_file in files:
+        count = await insert_json(json_file, service=service)
+        logger.info("Loaded %s: %d assets", json_file.name, count)
+        total += count
+    return total
+
+
 async def _insert_missing_locations(
     dataframe: pd.DataFrame, *, service: str
 ) -> tuple[int, int]:
@@ -104,11 +148,13 @@ async def _insert_missing_locations(
     cities = dataframe[["city_name"]].drop_duplicates().rename(
         columns={"city_name": "name"}
     )
-    neighborhoods = dataframe[["city_name", "neighborhood_name"]].drop_duplicates().rename(
+    neighborhoods = dataframe[["city_name", "neighborhood_name"]].dropna(
+        subset=["neighborhood_name"]
+    ).drop_duplicates().rename(
         columns={"city_name": "city_name", "neighborhood_name": "name"}
     )
 
-    inserter = Inserter().connect(service=service)
+    inserter = _connect_inserter(service)
     try:
         inserted_cities = inserter.insert(
             "cities", cities, on_conflict_do_nothing=True
@@ -130,9 +176,11 @@ async def _insert_assets(dataframe: pd.DataFrame, *, service: str) -> int:
     if dataframe.empty:
         return 0
 
-    inserter = Inserter().connect(service=service)
+    inserter = _connect_inserter(service)
     try:
-        inserted = inserter.insert("assets", dataframe)
+        inserted = inserter.insert(
+            "assets", dataframe, on_conflict_do_nothing=True
+        )
         inserter.conn.commit()
     except Exception:
         inserter.conn.rollback()
@@ -142,11 +190,16 @@ async def _insert_assets(dataframe: pd.DataFrame, *, service: str) -> int:
     return inserted
 
 
-def _db_service() -> str:
-    """Read DB_SERVICE from the project .env file, falling back to local."""
-    env_path = Path(__file__).resolve().parents[1] / ".env"
-    load_dotenv(env_path)
-    return os.getenv("DB_SERVICE", "local")
+def _connect_inserter(service: str) -> Inserter:
+    """Connect using the selected section in this project's pgser.conf."""
+    service_file = Path(__file__).resolve().parents[1] / "pgser.conf"
+    config = ConfigParser()
+    if not config.read(service_file):
+        raise FileNotFoundError(f"Database service file not found: {service_file}")
+    if service not in config:
+        raise ValueError(f"Database service [{service}] not found in {service_file}")
+    conninfo = make_conninfo(**dict(config[service]))
+    return Inserter().connect(conninfo=conninfo)
 
 
 def _bedroom_count(asset: PropertyObject) -> int | None:
@@ -158,10 +211,21 @@ def _bedroom_count(asset: PropertyObject) -> int | None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("json_file", type=Path, help="Path to a JSON array of listings")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="JSON listings file or folder (default: %(default)s)",
+    )
     parser.add_argument("--service", help="Override DB_SERVICE from .env")
     args = parser.parse_args()
-    count = asyncio.run(insert_json(args.json_file, service=args.service))
+    if args.path.is_dir():
+        count = asyncio.run(insert_directory(args.path, service=args.service))
+    elif args.path.is_file():
+        count = asyncio.run(insert_json(args.path, service=args.service))
+    else:
+        parser.error(f"Path does not exist: {args.path}")
     print(f"Inserted {count} assets")
 
 

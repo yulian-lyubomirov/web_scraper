@@ -45,6 +45,7 @@ class Inserter:
         *,
         schema: str = "public",
         columns: list[str] | None = None,
+        on_conflict_do_nothing: bool = True,
     ) -> int:
         """Insert dataframe rows and return the number of rows inserted.
 
@@ -68,6 +69,8 @@ class Inserter:
             sql.SQL(", ").join(map(sql.Identifier, selected)),
             sql.SQL(", ").join(sql.Placeholder() for _ in selected),
         )
+        if on_conflict_do_nothing:
+            query += sql.SQL(" ON CONFLICT DO NOTHING")
         rows = [
             tuple(_adapt_value(value) for value in record)
             for record in df.loc[:, selected].itertuples(index=False, name=None)
