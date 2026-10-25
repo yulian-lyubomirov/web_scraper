@@ -1,3 +1,8 @@
 node_modules/
 .env
 *.conf
+data/
+*.json
+*.ipynb
+*.node_modules
+*.pyc
