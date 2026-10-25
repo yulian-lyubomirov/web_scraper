@@ -77,7 +77,7 @@ class Inserter:
         ]
         with self.conn.cursor() as cursor:
             cursor.executemany(query, rows)
-        return len(rows)
+            return cursor.rowcount
 
 
 def _adapt_value(value: Any) -> Any:
