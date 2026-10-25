@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS neighborhoods (
 CREATE TABLE IF NOT EXISTS assets (
     id SERIAL PRIMARY KEY,
     city_name TEXT NOT NULL,
-    neighborhood_name TEXT NOT NULL,
+    neighborhood_name TEXT,
     FOREIGN KEY (city_name, neighborhood_name)
         REFERENCES neighborhoods(city_name, name),
     source TEXT NOT NULL,
