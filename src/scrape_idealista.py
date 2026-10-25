@@ -3,6 +3,7 @@
 Examples:
     python src/scrape_idealista.py "https://www.idealista.com/venta-viviendas/madrid-madrid/"
     python src/scrape_idealista.py "https://www.idealista.com/inmueble/123456789/" --max-listings 100
+    python src/scrape_idealista.py --address "Calle de Alcalá, Madrid" --max-listings 100
 """
 
 import argparse
@@ -38,6 +39,11 @@ def parse_args():
         help="Maximum listings to process in this run (default: 100000).",
     )
     parser.add_argument(
+        "--address",
+        help="Address or area to search from the Idealista homepage before scraping.",
+        default="Madrid",
+    )
+    parser.add_argument(
         "--output",
         default=str(DEFAULT_DATA_FILE),
         help=f"JSON output file (default: {DEFAULT_DATA_FILE}). Relative paths use the current directory.",
@@ -54,8 +60,80 @@ def validate_initial_url(url):
         raise ValueError("initial_url must be a property listing or a /venta-viviendas/ results page")
 
 
-async def scrape(initial_url, max_listings, output_file):
+async def remove_url_fragment(page):
+    parsed_url = urlparse(page.url)
+    if parsed_url.fragment:
+        clean_url = parsed_url._replace(fragment="").geturl()
+        await page.goto(clean_url, wait_until="domcontentloaded", timeout=60_000)
+
+
+async def normalize_search_results_url(page):
+    parsed_url = urlparse(page.url)
+    if "/venta-viviendas/" not in parsed_url.path:
+        raise RuntimeError(
+            f"Cannot normalize search URL before Idealista results load: {page.url}"
+        )
+    clean_path = re.sub(r"/searchHL/?$", "", parsed_url.path, flags=re.I).rstrip("/") + "/"
+    clean_url = parsed_url._replace(path=clean_path, fragment="").geturl()
+    if clean_url != page.url:
+        await page.goto(clean_url, wait_until="domcontentloaded", timeout=60_000)
+
+
+async def click_listing_without_fragment(listing):
+    href = await listing.get_attribute("href")
+    if href and "#" in href:
+        clean_href = href.split("#", 1)[0]
+        await listing.evaluate(
+            "(element, href) => element.setAttribute('href', href)", clean_href
+        )
+    await listing.click()
+
+
+async def search_by_address(page, address):
+    """Submit a homepage location search and wait for its results page."""
+    reject_cookies = page.get_by_text("Rechazar", exact=True).first
+    try:
+        await reject_cookies.wait_for(state="visible", timeout=8_000)
+        await reject_cookies.click(timeout=10_000)
+        await reject_cookies.wait_for(state="hidden", timeout=10_000)
+    except Exception as error:
+        # The consent dialog may not appear if its choice was saved already.
+        if await reject_cookies.is_visible():
+            raise RuntimeError(f"Could not dismiss the cookie dialog with Rechazar: {error}") from error
+
+    search_input = page.locator("#campoBus")
+    await search_input.wait_for(state="visible", timeout=30_000)
+    await search_input.fill(address)
+
+    # Enter submits the homepage search; wait for its results route rather
+    # than trying to click the homepage button after navigation has begun.
+    await search_input.press("Enter")
+
+    browser_context = page.context
+    async def find_results_page():
+        while True:
+            results_page = next(
+                (
+                    candidate
+                    for candidate in browser_context.pages
+                    if "/venta-viviendas/" in candidate.url
+                    and "/inmueble/" not in candidate.url
+                ),
+                None,
+            )
+            if results_page:
+                return results_page
+            await asyncio.sleep(0.2)
+
+    page = await asyncio.wait_for(find_results_page(), timeout=60)
+
+    await normalize_search_results_url(page)
+    return page
+
+
+async def scrape(initial_url, max_listings, output_file, address=None):
     validate_initial_url(initial_url)
+    initial_url = urlparse(initial_url)._replace(fragment="").geturl()
     if max_listings < 1:
         raise ValueError("--max-listings must be at least 1")
     if not EXTRACTOR_FILE.is_file():
@@ -96,12 +174,25 @@ async def scrape(initial_url, max_listings, output_file):
             ],
         )
         try:
+            cdp_session = await browser.new_browser_cdp_session()
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 viewport={"width": 1366, "height": 768},
                 locale="es-ES",
                 timezone_id="Europe/Madrid",
             )
+            browser_contexts = await cdp_session.send("Target.getBrowserContexts")
+            context_ids = browser_contexts.get("browserContextIds", [])
+            if context_ids:
+                await cdp_session.send(
+                    "Browser.setPermission",
+                    {
+                        "permission": {"name": "geolocation"},
+                        "setting": "denied",
+                        "origin": "https://www.idealista.com",
+                        "browserContextId": context_ids[-1],
+                    },
+                )
             page = await context.new_page()
 
             def remember_search_results(frame):
@@ -124,26 +215,50 @@ async def scrape(initial_url, max_listings, output_file):
 
             initial_path = urlparse(initial_url).path
             if initial_path in {"", "/"}:
-                print("In the browser, complete any site prompts, search for listings, and open the first property.")
+                if address:
+                    print(f"Searching Idealista for: {address}")
+                    page = await search_by_address(page, address)
+                    search_results_url = page.url
+                    print(f"Search results loaded: {search_results_url}")
+                    first_listing = page.locator("a.item-link:visible").first
+                    await first_listing.wait_for(state="visible", timeout=30_000)
+                    print(f"Opening first listing: {await first_listing.get_attribute('href')}")
+                    await click_listing_without_fragment(first_listing)
+                    await page.wait_for_timeout(5_000)
+                    while re.search(r"/inmueble/\d+/?", urlparse(page.url).path) is None:
+                        await asyncio.sleep(1)
+                    await remove_url_fragment(page)
+                else:
+                    print("In the browser, complete any site prompts, search for listings, and open the first property.")
+                    while re.search(r"/inmueble/\d+/?", urlparse(page.url).path) is None:
+                        await asyncio.sleep(1)
+            elif re.search(r"/inmueble/\d+/?", initial_path) is None:
+                await normalize_search_results_url(page)
+                search_results_url = page.url
+                first_listing = page.locator("a.item-link:visible").first
+                await first_listing.wait_for(state="visible", timeout=30_000)
+                await click_listing_without_fragment(first_listing)
+                await page.wait_for_timeout(5_000)
                 while re.search(r"/inmueble/\d+/?", urlparse(page.url).path) is None:
                     await asyncio.sleep(1)
-            elif re.search(r"/inmueble/\d+/?", initial_path) is None:
-                first_listing = page.locator(".item-link").first
-                await first_listing.wait_for(state="visible", timeout=30_000)
-                await first_listing.click()
-                await page.wait_for_timeout(1_000)
+                await remove_url_fragment(page)
 
             print("Starting listing extraction and 'Siguiente' navigation...")
+            if "/inmueble/" not in page.url:
+                raise RuntimeError(f"Expected a property page before scraping, got: {page.url}")
 
             for iteration in range(max_listings):
                 await page.evaluate("window.scrollTo(0, 0)")
                 await asyncio.sleep(1)
+
+                await remove_url_fragment(page)
 
                 current_url = page.url
                 match = re.search(r"/inmueble/(\d+)/", current_url)
                 listing_id = match.group(1) if match else None
                 if listing_id:
                     visited_listing_ids.add(listing_id)
+                    print(f"Extracting listing {listing_id} from {current_url}")
 
                     full_js_evaluation = f"""
                     async (id) => {{
@@ -211,7 +326,7 @@ async def scrape(initial_url, max_listings, output_file):
                     saved_listing_count = len(scraped_listings)
                     page_from_count = saved_listing_count // 30 + 1
                     next_search_page = max(current_search_page + 1, page_from_count)
-                    clean_search_url = search_results_url.split("?", 1)[0].rstrip("/")
+                    clean_search_url = re.split(r"[?#]", search_results_url, maxsplit=1)[0].rstrip("/")
                     base_search_url = re.sub(
                         r"/pagina-\d+\.htm$", "", clean_search_url
                     ).rstrip("/") + "/"
@@ -232,14 +347,17 @@ async def scrape(initial_url, max_listings, output_file):
                         wait_until="domcontentloaded",
                         timeout=60_000,
                     )
-                    first_listing = page.locator(".item-link").first
+                    first_listing = page.locator("a.item-link:visible").first
                     try:
                         await first_listing.wait_for(state="visible", timeout=15_000)
                     except Exception:
                         print(f"No listing cards found on results page {next_search_page}; stopping.")
                         break
-                    await first_listing.click()
-                    await page.wait_for_timeout(1_000)
+                    await click_listing_without_fragment(first_listing)
+                    await page.wait_for_timeout(5_000)
+                    while re.search(r"/inmueble/\d+/?", urlparse(page.url).path) is None:
+                        await asyncio.sleep(1)
+                    await remove_url_fragment(page)
                     continue
 
                 box = await next_button.bounding_box()
@@ -267,7 +385,7 @@ async def scrape(initial_url, max_listings, output_file):
 def main():
     args = parse_args()
     try:
-        asyncio.run(scrape(args.initial_url, args.max_listings, args.output))
+        asyncio.run(scrape(args.initial_url, args.max_listings, args.output, args.address))
     except KeyboardInterrupt:
         print("Interrupted by user; data saved so far remains in the output JSON.")
 
